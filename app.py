@@ -194,34 +194,142 @@ elif menu=="Academics CBC":
     st.dataframe(pd.read_sql("SELECT reg_no,term,exam_type,total,mean,grade,done_by FROM academics ORDER BY id DESC", conn), use_container_width=True)
 
 elif menu=="Report Cards":
-    st.subheader("Report Card Generator - Teacher & Director")
-    reg = st.text_input("Enter Reg No for Report Card")
+    st.subheader("Report Card Generator - CBC Presentable")
+
+    def get_cbc_level(mark):
+        if mark >= 76: return "EE"
+        elif mark >= 51: return "ME"
+        elif mark >= 26: return "AE"
+        else: return "BE"
+
+    def get_cbc_comment(level):
+        if level=="EE": return "Exceeding Expectation - Excellent"
+        if level=="ME": return "Meeting Expectation - Good"
+        if level=="AE": return "Approaching Expectation - Fair"
+        return "Below Expectation - Needs Support"
+
+    def get_grade(mark):
+        if mark>=80: return "A"
+        if mark>=65: return "B"
+        if mark>=50: return "C"
+        if mark>=35: return "D"
+        return "E"
+
+    reg = st.text_input("Enter Reg No for Report Card (e.g JLC/0004/2024)", key="rep_reg")
     if reg:
         df_s = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg}'", conn)
         df_a = pd.read_sql(f"SELECT * FROM academics WHERE reg_no='{reg}' ORDER BY id DESC LIMIT 1", conn)
-        if not df_s.empty:
+        if not df_s.empty and not df_a.empty:
             s=df_s.iloc[0]
-            st.write(f"**Name:** {s['name']} | **Class:** {s['class']} | **Balance:** {s['balance']}")
-            if not df_a.empty:
-                marks_dict = json.loads(df_a.iloc[0]['subjects_json'])
-                st.write("**Latest Marks:**"); st.json(marks_dict)
-                st.write(f"**Total:** {df_a.iloc[0]['total']} Mean: {df_a.iloc[0]['mean']} Grade: {df_a.iloc[0]['grade']}")
-                # Build TXT Report
-                report = f"""JAWABU LEARNING CENTRE - REPORT CARD
-Reg: {s['reg_no']}
-Name: {s['name']}
-Class: {s['class']}
-Parent: {s['parent_name']} {s['parent_phone']}
-Term: {df_a.iloc[0]['term']} Exam: {df_a.iloc[0]['exam_type']}
+            a=df_a.iloc[0]
+            marks_dict = json.loads(a['subjects_json'])
+            term = a['term']
+            exam_type = a['exam_type']
 
-"""
+            # Build HTML Report Card
+            total = a['total']
+            mean = a['mean']
+            overall_level = get_cbc_level(mean)
+
+            html_report = f"""
+            <div style="border:3px solid #ff85a1; padding:20px; background:white; border-radius:15px; font-family: Arial;">
+                <h1 style="text-align:center; color:#e91e63; margin:0;">JAWABU LEARNING CENTRE</h1>
+                <p style="text-align:center; color:#ff4d7a; font-style:italic; margin:0;">Nurturing Competence • Building Character</p>
+                <p style="text-align:center; font-size:12px;">P.O. Box 1234-00100, Nairobi | Tel: 0700 123 456</p>
+                <hr style="border:1px solid #ff85a1;">
+
+                <div style="background:#fff0f3; padding:10px; border-radius:10px; margin-bottom:15px;">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <tr>
+                            <td><b>Name:</b> {s['name']}</td>
+                            <td><b>Class:</b> {s['class']}</td>
+                            <td><b>Term:</b> {term}</td>
+                        </tr>
+                        <tr>
+                            <td><b>Admission No:</b> {s['reg_no']}</td>
+                            <td><b>Year:</b> {datetime.date.today().year}</td>
+                            <td><b>Exam:</b> {exam_type}</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <h3 style="text-align:center; background:#ffe4e9; padding:8px; border-radius:8px; color:#e91e63;">PERFORMANCE REPORT — COMPETENCY BASED CURRICULUM (CBC)</h3>
+
+                <table style="width:100%; border-collapse:collapse; border:1px solid #ff85a1;">
+                    <tr style="background:#ff85a1; color:white;">
+                        <th style="padding:8px; border:1px solid #ff85a1; text-align:left;">Subject</th>
+                        <th style="padding:8px; border:1px solid #ff85a1;">Marks (%)</th>
+                        <th style="padding:8px; border:1px solid #ff85a1;">Grade</th>
+                        <th style="padding:8px; border:1px solid #ff85a1;">CBC Level</th>
+                        <th style="padding:8px; border:1px solid #ff85a1;">Comment</th>
+                    </tr>
+            """
+            for subj, mark in marks_dict.items():
+                level = get_cbc_level(mark)
+                grade = get_grade(mark)
+                comment = get_cbc_comment(level)
+                html_report += f"""
+                    <tr>
+                        <td style="padding:6px; border:1px solid #ffc2d1;"><b>{subj}</b></td>
+                        <td style="padding:6px; border:1px solid #ffc2d1; text-align:center;">{mark}</td>
+                        <td style="padding:6px; border:1px solid #ffc2d1; text-align:center;">{grade}</td>
+                        <td style="padding:6px; border:1px solid #ffc2d1; text-align:center; font-weight:bold;">{level}</td>
+                        <td style="padding:6px; border:1px solid #ffc2d1; font-size:12px;">{comment}</td>
+                    </tr>
+                """
+
+            html_report += f"""
+                </table>
+                <div style="display:flex; justify-content:space-between; background:#fff0f3; padding:10px; margin-top:15px; border-radius:10px;">
+                    <div><b>TOTAL MARKS:</b><br><span style="font-size:18px; font-weight:bold;">{total} / {len(marks_dict)*100}</span></div>
+                    <div><b>MEAN SCORE:</b><br><span style="font-size:18px; font-weight:bold;">{mean}%</span></div>
+                    <div><b>OVERALL GRADE:</b><br><span style="font-size:18px; font-weight:bold;">{overall_level} - {get_cbc_comment(overall_level)}</span></div>
+                </div>
+                <div style="margin-top:15px; font-size:12px; background:#fff8f9; padding:10px; border-radius:8px;">
+                    <b>CLASS TEACHER'S COMMENT:</b> {s['name']} is { 'diligent and hardworking, exceeds expectations' if mean>=76 else 'meeting expectations, good progress' if mean>=51 else 'approaching expectations, needs more effort'}. Keep it up!<br><br>
+                    <b>Fee Balance:</b> Ksh {s['balance']} | <b>Generated by:</b> {username} on {datetime.date.today()}<br><br>
+                    <b>EE</b> - Exceeding (76-100%) | <b>ME</b> - Meeting (51-75%) | <b>AE</b> - Approaching (26-50%) | <b>BE</b> - Below (0-25%)
+                </div>
+            </div>
+            """
+
+            st.markdown(html_report, unsafe_allow_html=True)
+
+            # Download buttons
+            c1,c2 = st.columns(2)
+            # Text download
+            txt_report = f"JAWABU LEARNING CENTRE\n{term} - {exam_type}\nName: {s['name']} Class: {s['class']} Reg: {reg}\n\n"
+            for subj, mark in marks_dict.items():
+                txt_report += f"{subj}: {mark}% - {get_cbc_level(mark)} - {get_cbc_comment(get_cbc_level(mark))}\n"
+            txt_report += f"\nTotal: {total} Mean: {mean} Overall: {overall_level}\nFee Balance: {s['balance']}\n"
+            c1.download_button("📄 Download as TXT", txt_report, file_name=f"{reg}_{exam_type}.txt")
+
+            # Try PDF download
+            try:
+                from fpdf import FPDF
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", 'B', 16)
+                pdf.cell(0,10,"JAWABU LEARNING CENTRE",0,1,'C')
+                pdf.set_font("Arial",'',10)
+                pdf.cell(0,5,f"{term} - {exam_type}",0,1,'C')
+                pdf.cell(0,5,f"Name: {s['name']} | Class: {s['class']} | Reg: {reg}",0,1,'C')
+                pdf.ln(5)
+                pdf.set_font("Arial",'B',10)
+                pdf.cell(50,8,"Subject",1); pdf.cell(20,8,"Marks",1); pdf.cell(20,8,"Grade",1); pdf.cell(20,8,"Level",1); pdf.cell(80,8,"Comment",1); pdf.ln()
+                pdf.set_font("Arial",'',9)
                 for subj, mark in marks_dict.items():
-                    report += f"{subj}: {mark}\n"
-                report += f"------------------------------\nTotal: {df_a.iloc[0]['total']} Mean: {df_a.iloc[0]['mean']} Grade: {df_a.iloc[0]['grade']}\nFee Balance: Ksh {s['balance']}\nGenerated by: {username} on {datetime.date.today()}\n"
-                st.download_button("📄 DOWNLOAD REPORT CARD", report, file_name=f"{reg}_Report.txt")
-                log_action(username, role, "REPORT CARD", f"Generated report for {reg}")
-            else:
-                st.warning("No marks found for this student yet.")
+                    pdf.cell(50,7,subj[:24],1); pdf.cell(20,7,str(mark),1); pdf.cell(20,7,get_grade(mark),1); pdf.cell(20,7,get_cbc_level(mark),1); pdf.cell(80,7,get_cbc_comment(get_cbc_level(mark))[:40],1); pdf.ln()
+                pdf.ln(3)
+                pdf.cell(0,8,f"Total: {total} Mean: {mean}% Overall: {overall_level} Balance: Ksh {s['balance']}",0,1)
+                pdf_output = pdf.output(dest='S').encode('latin-1')
+                c2.download_button("📕 Download PDF Report Card", pdf_output, file_name=f"{reg}_Report.pdf", mime="application/pdf")
+            except Exception as e:
+                c2.info("Add fpdf2 in requirements.txt to enable PDF")
+
+            log_action(username, role, "REPORT CARD", f"Generated {exam_type} for {reg}")
+        elif not df_s.empty:
+            st.warning("No marks saved yet for this student. Go to Academics CBC first.")
         else:
             st.error("Student not found")
 

@@ -1,35 +1,30 @@
 import streamlit as st
 import pandas as pd
-import datetime, os
-import sqlite3
+import datetime, os, json, sqlite3
 
 st.set_page_config(page_title="JAWABU LEARNING CENTRE", page_icon="🏫", layout="wide")
-st.markdown("""
-<style>
+st.markdown("""<style>
 .stApp {background: #fff0f3;}
 h1,h2,h3 {color: #ff4d7a!important;}
 div[data-testid="stMetric"] {background:white; border:1px solid #ffe4e9; border-radius:20px; padding:10px;}
 .stButton>button {background:#ff85a1; color:white; border-radius:12px; border:none; font-weight:bold;}
-</style>
-""", unsafe_allow_html=True)
+</style>""", unsafe_allow_html=True)
 
 FEE_STRUCTURE = {"Play Group": 5000, "PP1": 7000, "PP2": 7000, "Grade 1": 10000, "Grade 2": 10000, "Grade 3": 10000, "Grade 4": 10000, "Grade 5": 10000, "Grade 6": 10000, "Grade 7": 12000, "Grade 8": 12000, "Grade 9": 12000}
 CLASSES = list(FEE_STRUCTURE.keys())
-
-# --- CBC SUBJECTS PER CLASS ---
 SUBJECTS_MAP = {
-    "Play Group": ["Language", "Mathematical", "Environmental", "Psychomotor & Creative", "Religious"],
-    "PP1": ["Language", "Mathematical", "Environmental", "Psychomotor & Creative", "Religious"],
-    "PP2": ["Language", "Mathematical", "Environmental", "Psychomotor & Creative", "Religious"],
-    "Grade 1": ["Mathematics", "English", "Kiswahili", "Environmental", "Creative Art", "Hygiene"],
-    "Grade 2": ["Mathematics", "English", "Kiswahili", "Environmental", "Creative Art", "Hygiene"],
-    "Grade 3": ["Mathematics", "English", "Kiswahili", "Environmental", "Creative Art", "Hygiene & Nutrition"],
-    "Grade 4": ["Mathematics", "English", "Kiswahili", "Science & Tech", "Social Studies", "CRE", "Agriculture", "Creative Arts"],
-    "Grade 5": ["Mathematics", "English", "Kiswahili", "Science & Tech", "Social Studies", "CRE", "Agriculture", "Creative Arts"],
-    "Grade 6": ["Mathematics", "English", "Kiswahili", "Science & Tech", "Social Studies", "CRE", "Agriculture", "Creative Arts"],
-    "Grade 7": ["Mathematics", "English", "Kiswahili", "Integrated Science", "Social Studies", "CRE", "Agriculture", "Pre-Technical", "Business"],
-    "Grade 8": ["Mathematics", "English", "Kiswahili", "Integrated Science", "Social Studies", "CRE", "Agriculture", "Pre-Technical", "Business"],
-    "Grade 9": ["Mathematics", "English", "Kiswahili", "Integrated Science", "Social Studies", "CRE", "Agriculture", "Pre-Technical", "Business"]
+    "Play Group": ["Language","Mathematical","Environmental","Psychomotor & Creative","Religious"],
+    "PP1": ["Language","Mathematical","Environmental","Psychomotor & Creative","Religious"],
+    "PP2": ["Language","Mathematical","Environmental","Psychomotor & Creative","Religious"],
+    "Grade 1": ["Mathematics","English","Kiswahili","Environmental","Creative Art","Hygiene"],
+    "Grade 2": ["Mathematics","English","Kiswahili","Environmental","Creative Art","Hygiene"],
+    "Grade 3": ["Mathematics","English","Kiswahili","Environmental","Creative Art","Hygiene & Nutrition"],
+    "Grade 4": ["Mathematics","English","Kiswahili","Science & Tech","Social Studies","CRE","Agriculture","Creative Arts"],
+    "Grade 5": ["Mathematics","English","Kiswahili","Science & Tech","Social Studies","CRE","Agriculture","Creative Arts"],
+    "Grade 6": ["Mathematics","English","Kiswahili","Science & Tech","Social Studies","CRE","Agriculture","Creative Arts"],
+    "Grade 7": ["Mathematics","English","Kiswahili","Integrated Science","Social Studies","CRE","Agriculture","Pre-Technical","Business"],
+    "Grade 8": ["Mathematics","English","Kiswahili","Integrated Science","Social Studies","CRE","Agriculture","Pre-Technical","Business"],
+    "Grade 9": ["Mathematics","English","Kiswahili","Integrated Science","Social Studies","CRE","Agriculture","Pre-Technical","Business"]
 }
 
 @st.cache_resource
@@ -37,158 +32,239 @@ def get_conn():
     return sqlite3.connect('jawabu.db', check_same_thread=False)
 conn = get_conn()
 cur = conn.cursor()
-cur.execute("CREATE TABLE IF NOT EXISTS students (reg_no TEXT PRIMARY KEY, name TEXT, parent_name TEXT, parent_phone TEXT, class TEXT, gender TEXT, dob TEXT, nemis TEXT, adm_date TEXT, fee_total INT, paid INT, balance INT, arrears INT)")
-cur.execute("CREATE TABLE IF NOT EXISTS mpesa_trans (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, reg_no TEXT, mpesa_code TEXT, amount INT, phone TEXT, tuition INT, transport INT, library INT, status TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, type TEXT, amount INT, description TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS academics (id INTEGER PRIMARY KEY AUTOINCREMENT, reg_no TEXT, term TEXT, exam_type TEXT, subjects_json TEXT, total INT, mean REAL, grade TEXT)")
-conn.commit()
 
+# --- TABLES ---
+cur.execute("CREATE TABLE IF NOT EXISTS students (reg_no TEXT PRIMARY KEY, name TEXT, parent_name TEXT, parent_phone TEXT, class TEXT, gender TEXT, dob TEXT, nemis TEXT, adm_date TEXT, fee_total INT, paid INT, balance INT, arrears INT)")
+cur.execute("CREATE TABLE IF NOT EXISTS mpesa_trans (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, reg_no TEXT, mpesa_code TEXT, amount INT, phone TEXT, tuition INT, transport INT, library INT, status TEXT, done_by TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, type TEXT, amount INT, description TEXT, done_by TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS academics (id INTEGER PRIMARY KEY AUTOINCREMENT, reg_no TEXT, term TEXT, exam_type TEXT, subjects_json TEXT, total INT, mean REAL, grade TEXT, done_by TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT, active INT, created_by TEXT, created_at TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, username TEXT, role TEXT, action TEXT, details TEXT)")
+
+# Default users if empty
+if pd.read_sql("SELECT * FROM users", conn).empty:
+    cur.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", ("admin","Jawabu@2026","DIRECTOR",1,"system",str(datetime.datetime.now())))
+    cur.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", ("accountant","Acc@2026","ACCOUNTANT",1,"admin",str(datetime.datetime.now())))
+    cur.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", ("teacher","Teach@2026","TEACHER",1,"admin",str(datetime.datetime.now())))
+    conn.commit()
+
+def log_action(username, role, action, details):
+    cur.execute("INSERT INTO audit_logs (timestamp,username,role,action,details) VALUES (?,?,?,?,?)", (str(datetime.datetime.now()), username, role, action, details))
+    conn.commit()
+
+# --- LOGIN ---
 if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+    st.session_state.logged_in=False
+
 if not st.session_state.logged_in:
-    st.markdown("<h1 style='text-align:center'>🏫 JAWABU LEARNING CENTRE</h1><p style='text-align:center'>Till: 4123456 | Paybill 247247</p>", unsafe_allow_html=True)
-    col1,col2,col3 = st.columns([1,2,1])
-    with col2:
+    st.markdown("<h1 style='text-align:center'>🏫 JAWABU LEARNING CENTRE</h1>", unsafe_allow_html=True)
+    c1,c2,c3 = st.columns([1,2,1])
+    with c2:
         with st.container(border=True):
-            u = st.text_input("Username")
-            p = st.text_input("Password", type="password")
+            u=st.text_input("Username")
+            p=st.text_input("Password", type="password")
             if st.button("LOGIN", use_container_width=True):
-                if u=="admin" and p=="Jawabu@2026": st.session_state.logged_in=True; st.session_state.role="DIRECTOR"
-                elif u=="accountant" and p=="Acc@2026": st.session_state.logged_in=True; st.session_state.role="ACCOUNTANT"
-                elif u=="teacher" and p=="Teach@2026": st.session_state.logged_in=True; st.session_state.role="TEACHER"
-                else: st.error("Wrong credentials")
-                st.rerun()
+                df_user = pd.read_sql(f"SELECT * FROM users WHERE username='{u}' AND password='{p}'", conn)
+                if not df_user.empty and df_user.iloc[0]['active']==1:
+                    st.session_state.logged_in=True
+                    st.session_state.username=u
+                    st.session_state.role=df_user.iloc[0]['role']
+                    log_action(u, df_user.iloc[0]['role'], "LOGIN", "Logged in")
+                    st.rerun()
+                elif not df_user.empty and df_user.iloc[0]['active']==0:
+                    st.error("Account DISABLED by Director. Contact Director.")
+                else:
+                    st.error("Wrong credentials")
     st.stop()
 
+username = st.session_state.username
 role = st.session_state.role
-st.sidebar.markdown(f"### 🏫 JAWABU\n**{role}**")
-menu = st.sidebar.radio("MENU", ["Dashboard", "Admissions", "Finance - Auto STK", "Expenses", "Academics CBC", "Fee Defaulters"])
-if st.sidebar.button("Logout"): st.session_state.logged_in=False; st.rerun()
 
-# DASHBOARD
-if menu=="Dashboard":
+# --- SIDEBAR MENU BY ROLE ---
+st.sidebar.markdown(f"### 🏫 JAWABU\n**User:** {username}\n**Role:** {role}")
+if role=="ACCOUNTANT":
+    menu_options = ["Admissions","Finance - Auto STK","Expenses","Fee Defaulters & Reports"]
+elif role=="TEACHER":
+    menu_options = ["Academics CBC","Report Cards"]
+else: # DIRECTOR
+    menu_options = ["Director Dashboard","Admissions","Finance - Auto STK","Expenses","Academics CBC","Report Cards","Fee Defaulters & Reports","User Management","Audit Logs"]
+
+menu = st.sidebar.radio("MENU", menu_options)
+if st.sidebar.button("Logout"):
+    log_action(username, role, "LOGOUT", "Logged out")
+    st.session_state.logged_in=False; st.rerun()
+
+# --- FUNCTIONS ---
+def show_student_auto(reg_input):
+    if reg_input:
+        df = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg_input}'", conn)
+        if not df.empty:
+            s=df.iloc[0]
+            st.success(f"✅ **{s['name']}** | Class: **{s['class']}** | Balance: Ksh {s['balance']} | Parent: {s['parent_phone']}")
+            return s
+        else:
+            st.error("Reg No not found"); return None
+    return None
+
+# --- PAGES ---
+
+if menu=="Director Dashboard":
+    st.title("Director Dashboard - Profit = Collected - Expenses")
     df_exp = pd.read_sql("SELECT * FROM expenses", conn)
-    df_mpesa = pd.read_sql("SELECT * FROM mpesa_trans", conn)
-    c1,c2,c3 = st.columns(3)
-    c1.metric("Total Collected", f"Ksh {df_mpesa['amount'].sum() if not df_mpesa.empty else 0}")
+    df_mp = pd.read_sql("SELECT * FROM mpesa_trans", conn)
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("Collected", f"Ksh {df_mp['amount'].sum() if not df_mp.empty else 0}")
     c2.metric("Expenses", f"Ksh {df_exp['amount'].sum() if not df_exp.empty else 0}")
-    c3.metric("Profit", f"Ksh {(df_mpesa['amount'].sum() if not df_mpesa.empty else 0)-(df_exp['amount'].sum() if not df_exp.empty else 0)}")
-    st.dataframe(df_mpesa, use_container_width=True)
+    c3.metric("PROFIT", f"Ksh {(df_mp['amount'].sum() if not df_mp.empty else 0)-(df_exp['amount'].sum() if not df_exp.empty else 0)}")
+    c4.metric("Students", pd.read_sql("SELECT * FROM students", conn).shape[0])
+    st.dataframe(df_mp, use_container_width=True)
 
-# ADMISSIONS
 elif menu=="Admissions":
-    st.subheader("Admissions - Auto Reg No")
+    st.subheader("Admissions")
     with st.form("admit"):
-        c1,c2,c3 = st.columns(3)
+        c1,c2,c3=st.columns(3)
         s_name=c1.text_input("Student Name"); p_name=c2.text_input("Parent Name"); p_phone=c3.text_input("Parent Phone 2547...")
-        s_class=c1.selectbox("Class", CLASSES); gender=c2.selectbox("Gender", ["Male","Female"]); dob=c3.date_input("DOB")
+        s_class=c1.selectbox("Class", CLASSES); gender=c2.selectbox("Gender",["Male","Female"]); dob=c3.date_input("DOB")
         if st.form_submit_button("Admit"):
             fee=FEE_STRUCTURE[s_class]; cnt=pd.read_sql("SELECT * FROM students", conn).shape[0]; reg=f"JLC/{cnt+1:04d}/{datetime.date.today().year%100}"
-            cur.execute("INSERT INTO students VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (reg,s_name,p_name,p_phone,s_class,gender,str(dob),"","",fee,0,fee,0)); conn.commit(); st.success(f"Admitted {reg}")
+            cur.execute("INSERT INTO students VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (reg,s_name,p_name,p_phone,s_class,gender,str(dob),"","",fee,0,fee,0)); conn.commit()
+            log_action(username, role, "ADMISSION", f"Admitted {reg} {s_name} in {s_class}")
+            st.success(f"Admitted {reg}")
     st.dataframe(pd.read_sql("SELECT reg_no,name,class,parent_phone,balance FROM students", conn), use_container_width=True)
 
-# FINANCE - AUTO REFLECT CLASS
 elif menu=="Finance - Auto STK":
-    st.subheader("Finance - Type Reg No, Class & Balance Auto-Shows")
-    reg_input = st.text_input("Enter Registration Number (e.g JLC/0001/26)", key="fin_reg")
-    if reg_input:
-        df_s = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg_input}'", conn)
-        if not df_s.empty:
-            s = df_s.iloc[0]
-            st.success(f"✅ Found: **{s['name']}** | Class: **{s['class']}** | Balance: **Ksh {s['balance']}** | Parent: {s['parent_phone']} | Fee: {s['fee_total']}")
-            phone_auto = s['parent_phone']
-        else:
-            st.warning("Reg No not found. Add student in Admissions first.")
-            phone_auto = ""
-    else:
-        phone_auto = ""
-
+    st.subheader("Finance - Auto Reflect Class")
+    reg_input = st.text_input("Enter Reg No", key="fin_reg")
+    student = show_student_auto(reg_input)
+    phone_auto = student['parent_phone'] if student is not None else ""
     with st.form("pay"):
-        c1,c2 = st.columns(2)
-        amount=c1.number_input("Amount Paying", min_value=1)
-        phone=c2.text_input("Parent Phone for STK", value=phone_auto)
-        if st.form_submit_button("📲 SEND STK PUSH & AUTO-RECORD"):
-            tuition=int(amount*0.8); transport=int(amount*0.15); library=amount-tuition-transport
-            code=f"QAH{os.urandom(2).hex().upper()}"
-            cur.execute("INSERT INTO mpesa_trans (date,reg_no,mpesa_code,amount,phone,tuition,transport,library,status) VALUES (?,?,?,?,?,?,?,?,?)", (str(datetime.datetime.now()), reg_input, code, int(amount), phone, tuition, transport, library, "AUTO_VERIFIED"))
-            cur.execute("UPDATE students SET paid=paid+?, balance=balance-? WHERE reg_no=?", (int(amount), int(amount), reg_input))
-            conn.commit()
-            st.success(f"Auto Recorded {code} - Director sees it instantly!")
-    st.dataframe(pd.read_sql("SELECT * FROM mpesa_trans ORDER BY id DESC", conn), use_container_width=True)
+        c1,c2=st.columns(2)
+        amount=c1.number_input("Amount", min_value=1)
+        phone=c2.text_input("Phone", value=phone_auto)
+        if st.form_submit_button("📲 SEND STK & RECORD"):
+            if student is None:
+                st.error("Enter valid Reg No first")
+            else:
+                tuition=int(amount*0.8); transport=int(amount*0.15); library=amount-tuition-transport
+                code=f"QAH{os.urandom(2).hex().upper()}"
+                cur.execute("INSERT INTO mpesa_trans (date,reg_no,mpesa_code,amount,phone,tuition,transport,library,status,done_by) VALUES (?,?,?,?,?,?,?,?,?,?)", (str(datetime.datetime.now()), reg_input, code, int(amount), phone, tuition, transport, library, "VERIFIED", username))
+                cur.execute("UPDATE students SET paid=paid+?, balance=balance-? WHERE reg_no=?", (int(amount), int(amount), reg_input))
+                conn.commit()
+                log_action(username, role, "FINANCE PAYMENT", f"{reg_input} paid {amount} code {code}")
+                st.success(f"Recorded {code}")
+    st.dataframe(pd.read_sql("SELECT date,reg_no,mpesa_code,amount,done_by,status FROM mpesa_trans ORDER BY id DESC", conn), use_container_width=True)
 
-# ACADEMICS - YOUR REQUEST
+elif menu=="Expenses":
+    st.subheader("Expenses")
+    with st.form("exp"):
+        c1,c2,c3=st.columns(3)
+        t=c1.selectbox("Type",["Salary","Food","Books","Electricity","Wifi","Transport"])
+        a=c2.number_input("Amount"); d=c3.text_input("Desc")
+        if st.form_submit_button("Add Expense"):
+            cur.execute("INSERT INTO expenses (date,type,amount,description,done_by) VALUES (?,?,?,?,?)", (str(datetime.date.today()),t,a,d,username)); conn.commit()
+            log_action(username, role, "EXPENSE", f"Added {t} {a} - {d}")
+            st.success("Added")
+    st.dataframe(pd.read_sql("SELECT * FROM expenses ORDER BY id DESC", conn), use_container_width=True)
+
 elif menu=="Academics CBC":
-    st.subheader("CBC - Opening, Mid-Term, End-Term - Auto Subjects by Class")
-
-    # --- THIS IS YOUR NEW FEATURE ---
-    reg_no_input = st.text_input("Enter Registration Number to Auto-Load Class & Subjects", placeholder="JLC/0001/26")
-
-    student_class = None
-    student_name = ""
-    subjects = []
-
+    st.subheader("CBC - Auto Subjects by Class")
+    reg_no_input = st.text_input("Enter Reg No to Auto-Load", placeholder="JLC/0001/26")
+    student_class=None; student_name=""; subjects=[]
     if reg_no_input:
         df_stud = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg_no_input}'", conn)
         if not df_stud.empty:
-            student_class = df_stud.iloc[0]['class']
-            student_name = df_stud.iloc[0]['name']
-            subjects = SUBJECTS_MAP.get(student_class, ["Mathematics","English","Kiswahili","Science","SST"])
-            st.info(f"👨‍🎓 **Student:** {student_name} | **Class:** {student_class} | **Subjects:** {', '.join(subjects)} | **Fee Balance:** Ksh {df_stud.iloc[0]['balance']}")
+            student_class=df_stud.iloc[0]['class']; student_name=df_stud.iloc[0]['name']
+            subjects=SUBJECTS_MAP.get(student_class, ["Mathematics","English","Kiswahili","Science","SST"])
+            st.info(f"👨‍🎓 {student_name} | Class: {student_class} | Subjects: {', '.join(subjects)}")
         else:
-            st.error(f"Reg No {reg_no_input} not found! Please admit student first.")
-            subjects = ["Mathematics","English","Kiswahili","Science","SST"]
-    else:
-        st.warning("👆 Type Reg No above to see subjects for that class")
-        subjects = []
-
+            st.error("Reg not found")
     if subjects:
         with st.form("marks_form"):
-            c1,c2 = st.columns(2)
-            term = c1.selectbox("Term", ["Term 1","Term 2","Term 3"])
-            exam_type = c2.selectbox("Exam Type", ["Opening Exam", "Mid Term Exam", "End Term Exam"])
+            c1,c2=st.columns(2)
+            term=c1.selectbox("Term",["Term 1","Term 2","Term 3"]); exam=c2.selectbox("Exam",["Opening","Mid Term","End Term"])
+            marks={}; cols=st.columns(3)
+            for i,subj in enumerate(subjects):
+                marks[subj]=cols[i%3].number_input(subj,0,100,0, key=f"m_{subj}")
+            if st.form_submit_button("Save Marks"):
+                total=sum(marks.values()); mean=round(total/len(subjects),1) if subjects else 0
+                grade="A" if mean>=80 else "B" if mean>=65 else "C" if mean>=50 else "D" if mean>=35 else "E"
+                cur.execute("INSERT INTO academics (reg_no,term,exam_type,subjects_json,total,mean,grade,done_by) VALUES (?,?,?,?,?,?,?,?)", (reg_no_input, term, exam, json.dumps(marks), total, mean, grade, username)); conn.commit()
+                log_action(username, role, "ACADEMICS", f"Saved marks for {reg_no_input} {student_class} Total {total} by {username}")
+                st.success(f"Saved Total {total} Mean {mean} Grade {grade}")
+    st.dataframe(pd.read_sql("SELECT reg_no,term,exam_type,total,mean,grade,done_by FROM academics ORDER BY id DESC", conn), use_container_width=True)
 
-            st.write(f"### Enter Marks for {student_class} - {exam_type}")
-            marks = {}
-            cols = st.columns(3)
-            for i, subj in enumerate(subjects):
-                marks[subj] = cols[i%3].number_input(f"{subj}", 0, 100, 0, key=f"mark_{subj}")
+elif menu=="Report Cards":
+    st.subheader("Report Card Generator - Teacher & Director")
+    reg = st.text_input("Enter Reg No for Report Card")
+    if reg:
+        df_s = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg}'", conn)
+        df_a = pd.read_sql(f"SELECT * FROM academics WHERE reg_no='{reg}' ORDER BY id DESC LIMIT 1", conn)
+        if not df_s.empty:
+            s=df_s.iloc[0]
+            st.write(f"**Name:** {s['name']} | **Class:** {s['class']} | **Balance:** {s['balance']}")
+            if not df_a.empty:
+                marks_dict = json.loads(df_a.iloc[0]['subjects_json'])
+                st.write("**Latest Marks:**"); st.json(marks_dict)
+                st.write(f"**Total:** {df_a.iloc[0]['total']} Mean: {df_a.iloc[0]['mean']} Grade: {df_a.iloc[0]['grade']}")
+                # Build TXT Report
+                report = f"""JAWABU LEARNING CENTRE - REPORT CARD
+Reg: {s['reg_no']}
+Name: {s['name']}
+Class: {s['class']}
+Parent: {s['parent_name']} {s['parent_phone']}
+Term: {df_a.iloc[0]['term']} Exam: {df_a.iloc[0]['exam_type']}
 
-            submitted = st.form_submit_button("💾 Save Marks & Auto Grade")
-            if submitted:
-                total = sum(marks.values())
-                mean = round(total/len(subjects),1) if subjects else 0
-                grade = "A" if mean>=80 else "B" if mean>=65 else "C" if mean>=50 else "D" if mean>=35 else "E"
-                import json
-                cur.execute("INSERT INTO academics (reg_no,term,exam_type,subjects_json,total,mean,grade) VALUES (?,?,?,?,?,?,?)", (reg_no_input, term, exam_type, json.dumps(marks), total, mean, grade))
-                conn.commit()
-                st.success(f"Saved! Total: {total} Mean: {mean} Grade: {grade} for {student_name}")
+"""
+                for subj, mark in marks_dict.items():
+                    report += f"{subj}: {mark}\n"
+                report += f"------------------------------\nTotal: {df_a.iloc[0]['total']} Mean: {df_a.iloc[0]['mean']} Grade: {df_a.iloc[0]['grade']}\nFee Balance: Ksh {s['balance']}\nGenerated by: {username} on {datetime.date.today()}\n"
+                st.download_button("📄 DOWNLOAD REPORT CARD", report, file_name=f"{reg}_Report.txt")
+                log_action(username, role, "REPORT CARD", f"Generated report for {reg}")
+            else:
+                st.warning("No marks found for this student yet.")
+        else:
+            st.error("Student not found")
 
-    st.divider()
-    st.dataframe(pd.read_sql("SELECT reg_no,term,exam_type,total,mean,grade,subjects_json FROM academics ORDER BY id DESC", conn), use_container_width=True)
-
-    c1,c2 = st.columns(2)
-    if c1.button("⬆️ Promote Single Student (Use Reg Above)"):
-        if reg_no_input and student_class:
-            idx = CLASSES.index(student_class)
-            if idx < len(CLASSES)-1:
-                new_class = CLASSES[idx+1]
-                cur.execute("UPDATE students SET class=? WHERE reg_no=?", (new_class, reg_no_input)); conn.commit()
-                st.success(f"{student_name} promoted from {student_class} to {new_class}")
-    if c2.button("⬆️ Promote Whole Class"):
-        from_class = st.selectbox("Select Class to Promote", CLASSES, key="promo")
-        idx = CLASSES.index(from_class)
-        if idx < len(CLASSES)-1:
-            cur.execute("UPDATE students SET class=? WHERE class=?", (CLASSES[idx+1], from_class)); conn.commit()
-            st.success(f"All {from_class} promoted to {CLASSES[idx+1]}")
-
-# EXPENSES
-elif menu=="Expenses":
-    with st.form("exp"):
-        t=st.selectbox("Type", ["Salary","Food","Books","Electricity","Wifi"]); a=st.number_input("Amount"); d=st.text_input("Desc")
-        if st.form_submit_button("Add"): cur.execute("INSERT INTO expenses (date,type,amount,description) VALUES (?,?,?,?)", (str(datetime.date.today()),t,a,d)); conn.commit()
-    st.dataframe(pd.read_sql("SELECT * FROM expenses", conn), use_container_width=True)
-
-elif menu=="Fee Defaulters":
-    df=pd.read_sql("SELECT reg_no,name,class,parent_phone,balance FROM students WHERE balance>0", conn)
+elif menu=="Fee Defaulters & Reports":
+    st.subheader("Fee Defaulters")
+    df=pd.read_sql("SELECT reg_no,name,class,parent_name,parent_phone,fee_total,paid,balance FROM students WHERE balance>0", conn)
     st.dataframe(df, use_container_width=True)
     st.download_button("Download CSV", df.to_csv(index=False), "defaulters.csv")
+
+elif menu=="User Management":
+    if role!="DIRECTOR":
+        st.error("Only Director can access"); st.stop()
+    st.subheader("Director: Create / Disable Users")
+    with st.form("create_user"):
+        c1,c2,c3=st.columns(3)
+        new_u=c1.text_input("New Username"); new_p=c2.text_input("Password"); new_r=c3.selectbox("Role",["ACCOUNTANT","TEACHER","DIRECTOR"])
+        if st.form_submit_button("Create Account"):
+            try:
+                cur.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (new_u,new_p,new_r,1,username,str(datetime.datetime.now()))); conn.commit()
+                log_action(username, role, "CREATE USER", f"Created {new_u} as {new_r}")
+                st.success(f"Created {new_u}")
+            except:
+                st.error("Username already exists")
+    st.divider()
+    st.subheader("All Users")
+    df_users = pd.read_sql("SELECT username,role,active,created_by,created_at FROM users", conn)
+    st.dataframe(df_users, use_container_width=True)
+    st.subheader("Disable / Enable Account")
+    sel_user = st.selectbox("Select Username", df_users['username'].tolist())
+    c1,c2=st.columns(2)
+    if c1.button("🔴 DISABLE Account"):
+        cur.execute("UPDATE users SET active=0 WHERE username=?", (sel_user,)); conn.commit()
+        log_action(username, role, "DISABLE USER", f"Disabled {sel_user}")
+        st.warning(f"{sel_user} disabled")
+    if c2.button("🟢 ENABLE Account"):
+        cur.execute("UPDATE users SET active=1 WHERE username=?", (sel_user,)); conn.commit()
+        log_action(username, role, "ENABLE USER", f"Enabled {sel_user}")
+        st.success(f"{sel_user} enabled")
+
+elif menu=="Audit Logs":
+    if role!="DIRECTOR":
+        st.error("Only Director"); st.stop()
+    st.subheader("Audit Trail - Who Did What")
+    df_log = pd.read_sql("SELECT timestamp,username,role,action,details FROM audit_logs ORDER BY id DESC", conn)
+    st.dataframe(df_log, use_container_width=True)
+    st.download_button("Download Audit CSV", df_log.to_csv(index=False), "audit_logs.csv")

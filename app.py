@@ -56,7 +56,6 @@ def log_action(username, role, action, details):
     cur.execute("INSERT INTO audit_logs (timestamp,username,role,action,details) VALUES (?,?,?,?,?)", (str(datetime.datetime.now()), username, role, action, details))
     conn.commit()
 
-# GET SETTINGS
 settings = pd.read_sql("SELECT * FROM school_settings WHERE id=1", conn).iloc[0]
 PAYBILL = settings['paybill']
 TILL = settings['till']
@@ -65,13 +64,12 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in=False
 
 if not st.session_state.logged_in:
-    st.markdown("<h1 style='text-align:center'>🏫 JAWABU LEARNING CENTRE</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align:center'>JAWABU LEARNING CENTRE</h1>", unsafe_allow_html=True)
     st.markdown(f"""
     <div style="background:#ffe4e9; border:2px dashed #ff85a1; padding:15px; border-radius:15px; text-align:center; margin-bottom:15px;">
-        <h2 style="margin:0; color:#e91e63;">💰 LIPA NA M-PESA</h2>
+        <h2 style="margin:0; color:#e91e63;">LIPA NA M-PESA</h2>
         <p style="font-size:24px; font-weight:bold; margin:5px;">Paybill: {PAYBILL} | Till: {TILL}</p>
         <p style="margin:0;"><b>Account No:</b> Student Reg No e.g JLC/0001/26</p>
-        <p style="font-size:12px; color:grey;">M-Pesa > Lipa na M-Pesa > Paybill > Enter {PAYBILL} > Account = Reg No</p>
     </div>
     """, unsafe_allow_html=True)
     c1,c2,c3 = st.columns([1,2,1])
@@ -92,7 +90,7 @@ if not st.session_state.logged_in:
 
 username = st.session_state.username
 role = st.session_state.role
-st.sidebar.markdown(f"### 🏫 JAWABU\n**User:** {username}\n**Role:** {role}")
+st.sidebar.markdown(f"### JAWABU\n**User:** {username}\n**Role:** {role}")
 
 if role=="ACCOUNTANT":
     menu_options = ["Admissions","Finance - Auto STK","Expenses","Fee Defaulters & Reports"]
@@ -105,7 +103,6 @@ menu = st.sidebar.radio("MENU", menu_options)
 if st.sidebar.button("Logout"):
     log_action(username, role, "LOGOUT", "Logged out"); st.session_state.logged_in=False; st.rerun()
 
-# PAGES
 if menu=="Director Dashboard":
     df_exp = pd.read_sql("SELECT * FROM expenses", conn); df_mp = pd.read_sql("SELECT * FROM mpesa_trans", conn)
     c1,c2,c3,c4 = st.columns(4)
@@ -113,7 +110,7 @@ if menu=="Director Dashboard":
     c2.metric("Expenses", f"Ksh {df_exp['amount'].sum() if not df_exp.empty else 0}")
     c3.metric("PROFIT", f"Ksh {(df_mp['amount'].sum() if not df_mp.empty else 0)-(df_exp['amount'].sum() if not df_exp.empty else 0)}")
     c4.metric("Students", pd.read_sql("SELECT * FROM students", conn).shape[0])
-    st.markdown(f"**Current Paybill:** {PAYBILL} | Till: {TILL}")
+    st.write(f"Current Paybill: {PAYBILL} | Till: {TILL}")
     st.dataframe(df_mp, use_container_width=True)
 
 elif menu=="Admissions":
@@ -130,4 +127,159 @@ elif menu=="Admissions":
 
 elif menu=="Finance - Auto STK":
     st.subheader("Finance - Auto Reflect Class")
-    st.info(f"💰 Parents Pay via Paybill **{PAYBILL}** Account = Reg No | Till **
+    st.info(f"Parents Pay via Paybill {PAYBILL} Account = Reg No | Till {TILL}")
+    reg_input = st.text_input("Enter Reg No")
+    student = None
+    if reg_input:
+        df = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg_input}'", conn)
+        if not df.empty:
+            s=df.iloc[0]; student=s; st.success(f"Found: {s['name']} | Class: {s['class']} | Balance: Ksh {s['balance']}")
+        else:
+            st.error("Reg No not found")
+    phone_auto = student['parent_phone'] if student is not None else ""
+    with st.form("pay"):
+        c1,c2=st.columns(2)
+        amount=c1.number_input("Amount", min_value=1); phone=c2.text_input("Phone", value=phone_auto)
+        if st.form_submit_button("SEND STK & RECORD"):
+            if student is None:
+                st.error("Enter valid Reg No first")
+            else:
+                tuition=int(amount*0.8); transport=int(amount*0.15); library=amount-tuition-transport
+                code=f"QAH{os.urandom(2).hex().upper()}"
+                cur.execute("INSERT INTO mpesa_trans (date,reg_no,mpesa_code,amount,phone,tuition,transport,library,status,done_by) VALUES (?,?,?,?,?,?,?,?,?,?)", (str(datetime.datetime.now()), reg_input, code, int(amount), phone, tuition, transport, library, "VERIFIED", username))
+                cur.execute("UPDATE students SET paid=paid+?, balance=balance-? WHERE reg_no=?", (int(amount), int(amount), reg_input)); conn.commit()
+                log_action(username, role, "FINANCE", f"{reg_input} paid {amount}"); st.success(f"Recorded {code}")
+    st.dataframe(pd.read_sql("SELECT date,reg_no,mpesa_code,amount,done_by,status FROM mpesa_trans ORDER BY id DESC", conn), use_container_width=True)
+
+elif menu=="Expenses":
+    st.subheader("Expenses")
+    with st.form("exp"):
+        c1,c2,c3=st.columns(3)
+        t=c1.selectbox("Type",["Salary","Food","Books","Electricity","Wifi"]); a=c2.number_input("Amount"); d=c3.text_input("Desc")
+        if st.form_submit_button("Add Expense"):
+            cur.execute("INSERT INTO expenses (date,type,amount,description,done_by) VALUES (?,?,?,?,?)", (str(datetime.date.today()),t,a,d,username)); conn.commit()
+            log_action(username, role, "EXPENSE", f"{t} {a}"); st.success("Added")
+    st.dataframe(pd.read_sql("SELECT * FROM expenses ORDER BY id DESC", conn), use_container_width=True)
+
+elif menu=="Academics CBC":
+    st.subheader("CBC - Auto Subjects by Class")
+    reg_no_input = st.text_input("Enter Reg No to Auto-Load", placeholder="JLC/0001/26")
+    student_class=None; subjects=[]
+    if reg_no_input:
+        df_stud = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg_no_input}'", conn)
+        if not df_stud.empty:
+            student_class=df_stud.iloc[0]['class']; student_name=df_stud.iloc[0]['name']
+            subjects=SUBJECTS_MAP.get(student_class, [])
+            st.info(f"Student: {student_name} | Class: {student_class} | Subjects: {', '.join(subjects)}")
+    if subjects:
+        with st.form("marks_form"):
+            c1,c2=st.columns(2)
+            term=c1.selectbox("Term",["Term 1","Term 2","Term 3"]); exam=c2.selectbox("Exam",["Opening","Mid Term","End Term"])
+            marks={}; cols=st.columns(3)
+            for i,subj in enumerate(subjects):
+                marks[subj]=cols[i%3].number_input(subj,0,100,0, key=f"m_{subj}")
+            if st.form_submit_button("Save Marks"):
+                total=sum(marks.values()); mean=round(total/len(subjects),1)
+                grade="A" if mean>=80 else "B" if mean>=65 else "C" if mean>=50 else "D" if mean>=35 else "E"
+                cur.execute("INSERT INTO academics (reg_no,term,exam_type,subjects_json,total,mean,grade,done_by) VALUES (?,?,?,?,?,?,?,?)", (reg_no_input, term, exam, json.dumps(marks), total, mean, grade, username)); conn.commit()
+                log_action(username, role, "ACADEMICS", f"Saved {reg_no_input} {total}"); st.success(f"Saved Total {total} Mean {mean} Grade {grade}")
+    st.dataframe(pd.read_sql("SELECT reg_no,term,exam_type,total,mean,grade,done_by FROM academics ORDER BY id DESC", conn), use_container_width=True)
+
+elif menu=="Report Cards":
+    st.subheader("Report Card - CBC Presentable")
+    def get_cbc_level(mark):
+        if mark>=76: return "EE"
+        elif mark>=51: return "ME"
+        elif mark>=26: return "AE"
+        else: return "BE"
+    def get_cbc_comment(level):
+        if level=="EE": return "Exceeding Expectation"
+        if level=="ME": return "Meeting Expectation"
+        if level=="AE": return "Approaching Expectation"
+        return "Below Expectation"
+    def get_grade(mark):
+        if mark>=80: return "A"
+        if mark>=65: return "B"
+        if mark>=50: return "C"
+        if mark>=35: return "D"
+        return "E"
+    reg = st.text_input("Enter Reg No for Report Card", key="rep_reg")
+    if reg:
+        df_s = pd.read_sql(f"SELECT * FROM students WHERE reg_no='{reg}'", conn)
+        df_a = pd.read_sql(f"SELECT * FROM academics WHERE reg_no='{reg}' ORDER BY id DESC LIMIT 1", conn)
+        if not df_s.empty and not df_a.empty:
+            s=df_s.iloc[0]; a=df_a.iloc[0]; marks_dict=json.loads(a['subjects_json']); term=a['term']; exam_type=a['exam_type']
+            total=a['total']; mean=a['mean']; overall_level=get_cbc_level(mean)
+            html_report = f"""
+            <div style="border:3px solid #ff85a1; padding:20px; background:white; border-radius:15px;">
+                <h1 style="text-align:center; color:#e91e63; margin:0;">JAWABU LEARNING CENTRE</h1>
+                <p style="text-align:center; color:#ff4d7a; font-style:italic; margin:0;">Nurturing Competence - Building Character</p>
+                <p style="text-align:center; font-size:12px;">Paybill: {PAYBILL} | Till: {TILL}</p>
+                <hr>
+                <table style="width:100%; border-collapse:collapse; background:#fff0f3;">
+                    <tr><td><b>Name:</b> {s['name']}</td><td><b>Class:</b> {s['class']}</td><td><b>Term:</b> {term}</td></tr>
+                    <tr><td><b>Reg:</b> {s['reg_no']}</td><td><b>Year:</b> {datetime.date.today().year}</td><td><b>Exam:</b> {exam_type}</td></tr>
+                </table>
+                <h3 style="text-align:center; background:#ffe4e9; padding:8px; border-radius:8px; color:#e91e63; margin-top:15px;">CBC PERFORMANCE REPORT - {exam_type} - {term}</h3>
+                <table style="width:100%; border-collapse:collapse; border:1px solid #ff85a1;">
+                    <tr style="background:#ff85a1; color:white;"><th style="padding:8px; border:1px solid #ff85a1; text-align:left;">Subject</th><th style="padding:8px; border:1px solid #ff85a1;">Marks</th><th style="padding:8px; border:1px solid #ff85a1;">Grade</th><th style="padding:8px; border:1px solid #ff85a1;">CBC</th><th style="padding:8px; border:1px solid #ff85a1;">Comment</th></tr>
+            """
+            for subj, mark in marks_dict.items():
+                level=get_cbc_level(mark); grade=get_grade(mark); comment=get_cbc_comment(level)
+                html_report+=f'<tr><td style="padding:6px; border:1px solid #ffc2d1;"><b>{subj}</b></td><td style="padding:6px; border:1px solid #ffc2d1; text-align:center;">{mark}</td><td style="padding:6px; border:1px solid #ffc2d1; text-align:center;">{grade}</td><td style="padding:6px; border:1px solid #ffc2d1; text-align:center; font-weight:bold;">{level}</td><td style="padding:6px; border:1px solid #ffc2d1; font-size:12px;">{comment}</td></tr>'
+            html_report+=f'</table><div style="display:flex; justify-content:space-between; background:#fff0f3; padding:10px; margin-top:15px; border-radius:10px;"><div><b>TOTAL:</b><br><span style="font-size:18px; font-weight:bold;">{total} / {len(marks_dict)*100}</span></div><div><b>MEAN:</b><br><span style="font-size:18px; font-weight:bold;">{mean}%</span></div><div><b>OVERALL:</b><br><span style="font-size:18px; font-weight:bold;">{overall_level} - {get_cbc_comment(overall_level)}</span></div></div></div>'
+            st.markdown(html_report, unsafe_allow_html=True)
+            log_action(username, role, "REPORT CARD", f"Generated {exam_type} for {reg}")
+        elif not df_s.empty:
+            st.warning("No marks saved yet. Go to Academics CBC first.")
+        else:
+            st.error("Student not found")
+
+elif menu=="Fee Defaulters & Reports":
+    df=pd.read_sql("SELECT reg_no,name,class,parent_name,parent_phone,fee_total,paid,balance FROM students WHERE balance>0", conn)
+    st.dataframe(df, use_container_width=True); st.download_button("Download CSV", df.to_csv(index=False), "defaulters.csv")
+
+elif menu=="School Settings":
+    if role!="DIRECTOR":
+        st.error("Only Director"); st.stop()
+    st.subheader("School M-Pesa Settings")
+    curr = pd.read_sql("SELECT * FROM school_settings WHERE id=1", conn).iloc[0]
+    with st.form("settings_form"):
+        c1,c2=st.columns(2)
+        new_paybill=c1.text_input("Paybill Number", value=curr['paybill'])
+        new_till=c2.text_input("Till Number", value=curr['till'])
+        new_name=st.text_input("School Name", value=curr['account_name'])
+        if st.form_submit_button("Save Paybill"):
+            cur.execute("UPDATE school_settings SET paybill=?, till=?, account_name=? WHERE id=1", (new_paybill, new_till, new_name)); conn.commit()
+            log_action(username, role, "SETTINGS", f"Changed Paybill to {new_paybill}"); st.success(f"Saved! New Paybill: {new_paybill}"); st.rerun()
+    st.markdown(f"### Parents pay: Paybill {curr['paybill']} Account = Reg No | Till {curr['till']}")
+
+elif menu=="User Management":
+    if role!="DIRECTOR":
+        st.error("Only Director"); st.stop()
+    st.subheader("Create / Disable Users")
+    with st.form("create_user"):
+        c1,c2,c3=st.columns(3)
+        new_u=c1.text_input("New Username"); new_p=c2.text_input("Password"); new_r=c3.selectbox("Role",["ACCOUNTANT","TEACHER","DIRECTOR"])
+        if st.form_submit_button("Create Account"):
+            try:
+                cur.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (new_u,new_p,new_r,1,username,str(datetime.datetime.now()))); conn.commit()
+                log_action(username, role, "CREATE USER", f"Created {new_u}"); st.success(f"Created {new_u}")
+            except:
+                st.error("Username exists")
+    df_users = pd.read_sql("SELECT username,role,active,created_by FROM users", conn)
+    st.dataframe(df_users, use_container_width=True)
+    sel_user = st.selectbox("Select Username", df_users['username'].tolist())
+    c1,c2=st.columns(2)
+    if c1.button("DISABLE"):
+        cur.execute("UPDATE users SET active=0 WHERE username=?", (sel_user,)); conn.commit(); log_action(username, role, "DISABLE USER", f"Disabled {sel_user}"); st.warning(f"{sel_user} disabled")
+    if c2.button("ENABLE"):
+        cur.execute("UPDATE users SET active=1 WHERE username=?", (sel_user,)); conn.commit(); log_action(username, role, "ENABLE USER", f"Enabled {sel_user}"); st.success(f"{sel_user} enabled")
+
+elif menu=="Audit Logs":
+    if role!="DIRECTOR":
+        st.error("Only Director"); st.stop()
+    st.subheader("Who Did What")
+    df_log = pd.read_sql("SELECT timestamp,username,role,action,details FROM audit_logs ORDER BY id DESC", conn)
+    st.dataframe(df_log, use_container_width=True)
+    st.download_button("Download Audit CSV", df_log.to_csv(index=False), "audit_logs.csv")

@@ -1,7 +1,11 @@
 import streamlit as st
 import pandas as pd
 import os
-from fpdf import FPDF
+try:
+    from fpdf import FPDF
+    HAS_FPDF = True
+except:
+    HAS_FPDF = False
 import datetime
 
 # ---- DATABASE CONNECTION - PERMANENT ----
@@ -179,7 +183,11 @@ elif menu == "Report Card - CBC Presentable":
                 pdf.cell(0, 8, "Powered by Jawabu System - Permanent Records", ln=True)
                 return pdf.output(dest="S").encode("latin1")
 
-            pdf_bytes = create_report_pdf()
+                      if not HAS_FPDF:
+                st.error("⚠️ Please add fpdf2 to requirements.txt to enable download")
+            else:
+                pdf_bytes = create_report_pdf()
+                st.download_button(...)
 
             st.download_button(
                 label="📥 DOWNLOAD REPORT CARD PDF",

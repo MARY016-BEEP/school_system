@@ -1,70 +1,51 @@
 import streamlit as st
 import pandas as pd
 import os
+import datetime
+
 try:
     from fpdf import FPDF
     HAS_FPDF = True
 except:
     HAS_FPDF = False
-import datetime
 
-# ---- DATABASE CONNECTION - PERMANENT ----
-# Try Supabase, fallback to SQLite for local test
+# ---- DATABASE ----
 try:
     import psycopg2
-    from psycopg2.extras import RealDictCursor
-
     DATABASE_URL = st.secrets["DATABASE_URL"] if "DATABASE_URL" in st.secrets else os.getenv("DATABASE_URL")
-
     def get_conn():
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
+        return psycopg2.connect(DATABASE_URL)
     USE_POSTGRES = True
 except:
     import sqlite3
     def get_conn():
         return sqlite3.connect("jawabu.db", check_same_thread=False)
     USE_POSTGRES = False
-    DATABASE_URL = None
 
 def init_db():
     conn = get_conn()
     c = conn.cursor()
     if USE_POSTGRES:
-        c.execute("""CREATE TABLE IF NOT EXISTS students (
-            id SERIAL PRIMARY KEY, name TEXT, reg_no TEXT UNIQUE, class TEXT, parent_phone TEXT
-        )""")
-        c.execute("""CREATE TABLE IF NOT EXISTS academics (
-            id SERIAL PRIMARY KEY, reg_no TEXT, subject TEXT, score INT, grade TEXT
-        )""")
-        c.execute("""CREATE TABLE IF NOT EXISTS fees (
-            id SERIAL PRIMARY KEY, reg_no TEXT, amount INT, date TEXT
-        )""")
+        c.execute("CREATE TABLE IF NOT EXISTS students (id SERIAL PRIMARY KEY, name TEXT, reg_no TEXT UNIQUE, class TEXT, parent_phone TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS academics (id SERIAL PRIMARY KEY, reg_no TEXT, subject TEXT, score INT, grade TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS fees (id SERIAL PRIMARY KEY, reg_no TEXT, amount INT, date TEXT)")
     else:
-        c.execute("""CREATE TABLE IF NOT EXISTS students (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, reg_no TEXT UNIQUE, class TEXT, parent_phone TEXT
-        )""")
-        c.execute("""CREATE TABLE IF NOT EXISTS academics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, reg_no TEXT, subject TEXT, score INT, grade TEXT
-        )""")
-        c.execute("""CREATE TABLE IF NOT EXISTS fees (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, reg_no TEXT, amount INT, date TEXT
-        )""")
+        c.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, reg_no TEXT UNIQUE, class TEXT, parent_phone TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS academics (id INTEGER PRIMARY KEY AUTOINCREMENT, reg_no TEXT, subject TEXT, score INT, grade TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS fees (id INTEGER PRIMARY KEY AUTOINCREMENT, reg_no TEXT, amount INT, date TEXT)")
     conn.commit()
     conn.close()
 
 init_db()
-
 st.set_page_config(page_title="JAWABU SCHOOL", layout="wide")
-st.title("🎓 JAWABU LEARNING CENTRE - MANAGEMENT SYSTEM")
+st.title("🎓 JAWABU LEARNING CENTRE")
 if USE_POSTGRES:
-    st.success("✅ Connected to Permanent Supabase Database - Records will NEVER disappear")
+    st.success("✅ Permanent Database - Records will NOT disappear")
 else:
-    st.warning("⚠️ Using Temporary Local DB - Add DATABASE_URL in Secrets for permanent")
+    st.warning("⚠️ Temporary DB - Add DATABASE_URL in Secrets")
 
-menu = st.sidebar.selectbox("Menu", ["Dashboard", "Student Registration", "Academics", "Fees", "Report Card - CBC Presentable"])
+menu = st.sidebar.selectbox("Menu", ["Dashboard", "Student Registration", "Academics", "Report Card - CBC Presentable", "Fees"])
 
-# ---- DASHBOARD ----
 if menu == "Dashboard":
     conn = get_conn()
     df = pd.read_sql("SELECT * FROM students", conn)
@@ -72,7 +53,6 @@ if menu == "Dashboard":
     st.metric("Total Students", len(df))
     st.dataframe(df)
 
-# ---- STUDENT REGISTRATION ----
 elif menu == "Student Registration":
     st.subheader("Register New Student")
     with st.form("reg"):
@@ -91,11 +71,10 @@ elif menu == "Student Registration":
                     c.execute("INSERT INTO students (name, reg_no, class, parent_phone) VALUES (?,?,?,?)", (name, reg_no, s_class, phone))
                 conn.commit()
                 conn.close()
-                st.success(f"Saved {name} - Permanent!")
+                st.success(f"Saved {name}")
             except Exception as e:
-                st.error(f"Error: {e} - Maybe Reg No exists")
+                st.error(f"Error: {e}")
 
-# ---- ACADEMICS ----
 elif menu == "Academics":
     st.subheader("Enter Marks")
     with st.form("marks"):
@@ -113,95 +92,65 @@ elif menu == "Academics":
                 c.execute("INSERT INTO academics (reg_no, subject, score, grade) VALUES (?,?,?,?)", (reg_no, subject, score, grade))
             conn.commit()
             conn.close()
-            st.success("Marks saved permanently!")
+            st.success("Marks saved!")
 
-# ---- REPORT CARD WITH DOWNLOAD BUTTON ----
 elif menu == "Report Card - CBC Presentable":
-    st.subheader("Report Card - CBC Presentable")
-    reg_no = st.text_input("Enter Reg No for Report Card")
-
+    st.subheader("Report Card")
+    reg_no = st.text_input("Enter Reg No")
     if reg_no:
         conn = get_conn()
         c = conn.cursor()
-
         if USE_POSTGRES:
             c.execute("SELECT * FROM students WHERE reg_no=%s", (reg_no,))
             student = c.fetchone()
-            # For postgres tuple, not dict
-            if student:
-                c.execute("SELECT subject, score, grade FROM academics WHERE reg_no=%s", (reg_no,))
-                marks = c.fetchall()
-            else:
-                marks = []
+            c.execute("SELECT subject, score, grade FROM academics WHERE reg_no=%s", (reg_no,))
+            marks = c.fetchall()
         else:
             c.execute("SELECT * FROM students WHERE reg_no=?", (reg_no,))
             student = c.fetchone()
             c.execute("SELECT subject, score, grade FROM academics WHERE reg_no=?", (reg_no,))
             marks = c.fetchall()
         conn.close()
-
         if not student:
-            st.error("Student not found! Check Reg No")
+            st.error("Student not found!")
         elif not marks:
-            st.warning("No marks found for this student. Go to Academics first.")
+            st.warning("No marks found. Go to Academics first.")
         else:
-            # Handle both postgres and sqlite result format
-            s_name = student[1] if not USE_POSTGRES or isinstance(student, tuple) else student['name']
-            s_reg = student[2] if not USE_POSTGRES or isinstance(student, tuple) else student['reg_no']
-            s_class = student[3] if not USE_POSTGRES or isinstance(student, tuple) else student['class']
-
+            s_name = student[1]
+            s_reg = student[2]
+            s_class = student[3]
             st.markdown(f"### {s_name} | {s_reg} | {s_class}")
             df_marks = pd.DataFrame(marks, columns=["Subject","Score","Grade"])
             st.table(df_marks)
-
-            # CREATE PDF
-            def create_report_pdf():
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", "B", 16)
-                pdf.cell(0, 10, "JAWABU LEARNING CENTRE", ln=True, align="C")
-                pdf.set_font("Arial", "B", 12)
-                pdf.cell(0, 8, "CBC COMPETENCY BASED REPORT CARD", ln=True, align="C")
-                pdf.ln(10)
-                pdf.set_font("Arial", "", 12)
-                pdf.cell(0, 8, f"Name: {s_name}", ln=True)
-                pdf.cell(0, 8, f"Reg No: {s_reg} | Class: {s_class} | Date: {datetime.date.today()}", ln=True)
-                pdf.ln(5)
-                # Table
-                pdf.set_font("Arial", "B", 11)
-                pdf.cell(70, 10, "Subject", border=1)
-                pdf.cell(40, 10, "Score", border=1)
-                pdf.cell(40, 10, "Grade", border=1, ln=True)
-                pdf.set_font("Arial", "", 11)
-                for subj, score, grade in marks:
-                    pdf.cell(70, 10, str(subj), border=1)
-                    pdf.cell(40, 10, str(score), border=1)
-                    pdf.cell(40, 10, str(grade), border=1, ln=True)
-                pdf.ln(10)
-                pdf.set_font("Arial", "I", 10)
-                pdf.cell(0, 8, "Class Teacher: ________________ Principal: ________________", ln=True)
-                pdf.cell(0, 8, "Powered by Jawabu System - Permanent Records", ln=True)
-                return pdf.output(dest="S").encode("latin1")
-
-                      if not HAS_FPDF:
-                st.error("⚠️ Please add fpdf2 to requirements.txt to enable download")
+            if not HAS_FPDF:
+                st.warning("Add fpdf2 to requirements.txt to enable DOWNLOAD button")
             else:
+                def create_report_pdf():
+                    pdf = FPDF()
+                    pdf.add_page()
+                    pdf.set_font("Arial", "B", 16)
+                    pdf.cell(0, 10, "JAWABU LEARNING CENTRE", ln=True, align="C")
+                    pdf.set_font("Arial", "B", 12)
+                    pdf.cell(0, 8, "CBC COMPETENCY REPORT CARD", ln=True, align="C")
+                    pdf.ln(10)
+                    pdf.set_font("Arial", "", 12)
+                    pdf.cell(0, 8, f"Name: {s_name}", ln=True)
+                    pdf.cell(0, 8, f"Reg: {s_reg} | Class: {s_class} | Date: {datetime.date.today()}", ln=True)
+                    pdf.ln(5)
+                    pdf.set_font("Arial", "B", 11)
+                    pdf.cell(70, 10, "Subject", border=1)
+                    pdf.cell(40, 10, "Score", border=1)
+                    pdf.cell(40, 10, "Grade", border=1, ln=True)
+                    pdf.set_font("Arial", "", 11)
+                    for subj, score, grade in marks:
+                        pdf.cell(70, 10, str(subj), border=1)
+                        pdf.cell(40, 10, str(score), border=1)
+                        pdf.cell(40, 10, str(grade), border=1, ln=True)
+                    return pdf.output(dest="S").encode("latin1")
                 pdf_bytes = create_report_pdf()
-                st.download_button(...)
+                st.download_button(label="📥 DOWNLOAD REPORT CARD PDF", data=pdf_bytes, file_name=f"Report_{s_reg}.pdf", mime="application/pdf", use_container_width=True, type="primary")
 
-            st.download_button(
-                label="📥 DOWNLOAD REPORT CARD PDF",
-                data=pdf_bytes,
-                file_name=f"ReportCard_{s_reg}_{datetime.date.today()}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                type="primary"
-            )
-            st.success("Click button above to download!")
-
-# ---- FEES (simple) ----
 elif menu == "Fees":
-    st.subheader("Fee Records")
     conn = get_conn()
     df = pd.read_sql("SELECT * FROM fees", conn)
     conn.close()
